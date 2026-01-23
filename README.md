@@ -288,4 +288,4 @@ sudo systemctl status postgresql
 
 ## 📄 许可证
 
-MIT License
+GNU GENERAL PUBLIC LICENSE Version 3
