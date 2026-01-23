@@ -37,10 +37,11 @@ class ExamService:
     def check_review_availability(user_id: uuid_pkg.UUID, collection_id: uuid_pkg.UUID, mode: str, session: Session) -> int:
         """检查是否有足够的单词进行复习（排除已在进行中考试的单词）"""
 
-        # 1. 查找当前用户所有未完成的考试
+        # 1. 查找当前用户所有未完成的同类型考试
         active_exams = session.exec(
             select(Exam.id).where(
                 Exam.user_id == user_id,
+                Exam.mode == mode, # 仅排除同模式的考试
                 Exam.exam_status.in_(["generated", "grading"])
             )
         ).all()
@@ -94,26 +95,29 @@ class ExamService:
             )
 
             # --- 排除已在其他未完成考试（generated, grading）中使用的单词 ---
-            # 1. 查找当前用户所有未完成的考试
-            active_exams = session.exec(
-                select(Exam.id).where(
-                    Exam.user_id == exam.user_id,
-                    Exam.exam_status.in_(["generated", "grading"]),
-                    Exam.id != exam.id  # 排除自己
-                )
-            ).all()
-
-            if active_exams:
-                # 2. 查找这些考试已经包含的 word_id (从 ExamSpellingSection 表查)
-                active_word_ids = session.exec(
-                    select(ExamSpellingSection.word_id).where(
-                        ExamSpellingSection.exam_id.in_(active_exams)
+            # 仅针对 'immediate' 模式执行严格去重
+            if mode == 'immediate':
+                # 1. 查找当前用户所有未完成的考试
+                active_exams = session.exec(
+                    select(Exam.id).where(
+                        Exam.user_id == exam.user_id,
+                        # Exam.mode == mode, # 移除模式限制，即时复习应排除所有占用
+                        Exam.exam_status.in_(["generated", "grading"]),
+                        Exam.id != exam.id  # 排除自己
                     )
                 ).all()
 
-                if active_word_ids:
-                    # 3. 在本次查询中排除这些 word_id
-                    query = query.where(UserWordItem.word_id.notin_(active_word_ids))
+                if active_exams:
+                    # 2. 查找这些考试已经包含的 word_id (从 ExamSpellingSection 表查)
+                    active_word_ids = session.exec(
+                        select(ExamSpellingSection.word_id).where(
+                            ExamSpellingSection.exam_id.in_(active_exams)
+                        )
+                    ).all()
+
+                    if active_word_ids:
+                        # 3. 在本次查询中排除这些 word_id
+                        query = query.where(UserWordItem.word_id.notin_(active_word_ids))
             # -----------------------------------------------------------
 
             # 模式逻辑
@@ -281,10 +285,11 @@ class ExamService:
     def check_review_availability(user_id: uuid_pkg.UUID, collection_id: uuid_pkg.UUID, mode: str, session: Session) -> int:
         """检查是否有足够的单词进行复习（排除已在进行中考试的单词）"""
 
-        # 1. 查找当前用户所有未完成的考试
+        # 1. 查找当前用户所有未完成的同类型考试
         active_exams = session.exec(
             select(Exam.id).where(
                 Exam.user_id == user_id,
+                Exam.mode == mode, # 仅排除同模式的考试
                 Exam.exam_status.in_(["generated", "grading"])
             )
         ).all()
@@ -366,10 +371,11 @@ class ExamService:
     def check_review_availability(user_id: uuid_pkg.UUID, collection_id: uuid_pkg.UUID, mode: str, session: Session) -> int:
         """检查是否有足够的单词进行复习（排除已在进行中考试的单词）"""
 
-        # 1. 查找当前用户所有未完成的考试
+        # 1. 查找当前用户所有未完成的同类型考试
         active_exams = session.exec(
             select(Exam.id).where(
                 Exam.user_id == user_id,
+                Exam.mode == mode, # 仅排除同模式的考试
                 Exam.exam_status.in_(["generated", "grading"])
             )
         ).all()
@@ -542,9 +548,9 @@ class ExamService:
         if exam.user_id != user_id:
             raise ValueError("无权删除此考试")
 
-        # 检查考试状态：仅允许删除已完成的考试
-        if exam.exam_status != "completed":
-            raise ValueError("仅能删除已完成的考试记录")
+        # 检查考试状态：仅允许删除已完成或失败的考试
+        if exam.exam_status not in ["completed", "failed"]:
+            raise ValueError("仅能删除已完成或失败的考试记录")
 
         # 2. 删除关联的题目数据 (如果数据库没设置级联删除，这里手动删除)
         # 实际上 SQLModel 的 delete() 方法可能不直接支持 exec().delete()，通常是用 session.delete(obj)

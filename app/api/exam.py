@@ -136,6 +136,29 @@ async def submit_exam(
     )
 
 
+@router.get("/available-words")
+async def get_available_words_count(
+    collection_id: uuid_pkg.UUID = Query(..., description="单词本ID"),
+    mode: str = Query(..., description="考试模式：immediate/random/complete"),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """获取指定单词本和模式下可用的单词数量"""
+    available_count = ExamService.check_review_availability(
+        user_id=current_user.id,
+        collection_id=collection_id,
+        mode=mode,
+        session=session
+    )
+
+    return {
+        "success": True,
+        "available_count": available_count,
+        "collection_id": collection_id,
+        "mode": mode
+    }
+
+
 @router.delete("/{exam_id}")
 async def delete_exam(
     exam_id: uuid_pkg.UUID,
