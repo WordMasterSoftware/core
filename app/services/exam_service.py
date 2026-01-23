@@ -35,11 +35,32 @@ class ExamService:
 
     @staticmethod
     def check_review_availability(user_id: uuid_pkg.UUID, collection_id: uuid_pkg.UUID, mode: str, session: Session) -> int:
-        """检查是否有足够的单词进行复习"""
+        """检查是否有足够的单词进行复习（排除已在进行中考试的单词）"""
+
+        # 1. 查找当前用户所有未完成的考试
+        active_exams = session.exec(
+            select(Exam.id).where(
+                Exam.user_id == user_id,
+                Exam.exam_status.in_(["generated", "grading"])
+            )
+        ).all()
+
+        active_word_ids = []
+        if active_exams:
+             active_word_ids = session.exec(
+                select(ExamSpellingSection.word_id).where(
+                    ExamSpellingSection.exam_id.in_(active_exams)
+                )
+            ).all()
+
+        # 2. 构建查询
         query = select(func.count()).select_from(UserWordItem).where(
             UserWordItem.user_id == user_id,
             UserWordItem.collection_id == collection_id
         )
+
+        if active_word_ids:
+            query = query.where(UserWordItem.word_id.notin_(active_word_ids))
 
         if mode == "complete":
             query = query.where(UserWordItem.status == 3)
@@ -203,21 +224,6 @@ class ExamService:
                 MessageService.create_message(session, exam.user_id, "考试生成失败", f"系统错误: {str(e)}")
 
     @staticmethod
-    def check_review_availability(user_id: uuid_pkg.UUID, collection_id: uuid_pkg.UUID, mode: str, session: Session) -> int:
-        """检查是否有足够的单词进行复习"""
-        query = select(func.count()).select_from(UserWordItem).where(
-            UserWordItem.user_id == user_id,
-            UserWordItem.collection_id == collection_id
-        )
-
-        if mode == "complete":
-            query = query.where(UserWordItem.status == 3)
-        else:
-            # immediate or random: status = 2
-            query = query.where(UserWordItem.status == 2)
-
-        return session.exec(query).one()
-    @staticmethod
     def get_user_exams(
         user_id: uuid_pkg.UUID,
         page: int,
@@ -273,11 +279,32 @@ class ExamService:
 
     @staticmethod
     def check_review_availability(user_id: uuid_pkg.UUID, collection_id: uuid_pkg.UUID, mode: str, session: Session) -> int:
-        """检查是否有足够的单词进行复习"""
+        """检查是否有足够的单词进行复习（排除已在进行中考试的单词）"""
+
+        # 1. 查找当前用户所有未完成的考试
+        active_exams = session.exec(
+            select(Exam.id).where(
+                Exam.user_id == user_id,
+                Exam.exam_status.in_(["generated", "grading"])
+            )
+        ).all()
+
+        active_word_ids = []
+        if active_exams:
+             active_word_ids = session.exec(
+                select(ExamSpellingSection.word_id).where(
+                    ExamSpellingSection.exam_id.in_(active_exams)
+                )
+            ).all()
+
+        # 2. 构建查询
         query = select(func.count()).select_from(UserWordItem).where(
             UserWordItem.user_id == user_id,
             UserWordItem.collection_id == collection_id
         )
+
+        if active_word_ids:
+            query = query.where(UserWordItem.word_id.notin_(active_word_ids))
 
         if mode == "complete":
             query = query.where(UserWordItem.status == 3)
@@ -337,11 +364,32 @@ class ExamService:
 
     @staticmethod
     def check_review_availability(user_id: uuid_pkg.UUID, collection_id: uuid_pkg.UUID, mode: str, session: Session) -> int:
-        """检查是否有足够的单词进行复习"""
+        """检查是否有足够的单词进行复习（排除已在进行中考试的单词）"""
+
+        # 1. 查找当前用户所有未完成的考试
+        active_exams = session.exec(
+            select(Exam.id).where(
+                Exam.user_id == user_id,
+                Exam.exam_status.in_(["generated", "grading"])
+            )
+        ).all()
+
+        active_word_ids = []
+        if active_exams:
+             active_word_ids = session.exec(
+                select(ExamSpellingSection.word_id).where(
+                    ExamSpellingSection.exam_id.in_(active_exams)
+                )
+            ).all()
+
+        # 2. 构建查询
         query = select(func.count()).select_from(UserWordItem).where(
             UserWordItem.user_id == user_id,
             UserWordItem.collection_id == collection_id
         )
+
+        if active_word_ids:
+            query = query.where(UserWordItem.word_id.notin_(active_word_ids))
 
         if mode == "complete":
             query = query.where(UserWordItem.status == 3)
