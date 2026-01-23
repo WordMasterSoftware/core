@@ -1,5 +1,6 @@
 """考试模块API"""
 from fastapi import APIRouter, Depends, Query, BackgroundTasks, HTTPException
+from typing import Optional
 from sqlmodel import Session
 from app.database import get_session
 from app.schemas.exam import (
@@ -72,6 +73,7 @@ async def generate_exam(
 async def get_exam_list(
     page: int = 1,
     size: int = 20,
+    mode: Optional[str] = Query(None, description="考试模式筛选"),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
@@ -80,7 +82,8 @@ async def get_exam_list(
         user_id=current_user.id,
         page=page,
         size=size,
-        session=session
+        session=session,
+        mode=mode
     )
 
 

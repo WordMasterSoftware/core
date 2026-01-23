@@ -72,6 +72,29 @@ class ExamService:
                 UserWordItem.user_id == exam.user_id
             )
 
+            # --- 排除已在其他未完成考试（generated, grading）中使用的单词 ---
+            # 1. 查找当前用户所有未完成的考试
+            active_exams = session.exec(
+                select(Exam.id).where(
+                    Exam.user_id == exam.user_id,
+                    Exam.exam_status.in_(["generated", "grading"]),
+                    Exam.id != exam.id  # 排除自己
+                )
+            ).all()
+
+            if active_exams:
+                # 2. 查找这些考试已经包含的 word_id (从 ExamSpellingSection 表查)
+                active_word_ids = session.exec(
+                    select(ExamSpellingSection.word_id).where(
+                        ExamSpellingSection.exam_id.in_(active_exams)
+                    )
+                ).all()
+
+                if active_word_ids:
+                    # 3. 在本次查询中排除这些 word_id
+                    query = query.where(UserWordItem.word_id.notin_(active_word_ids))
+            # -----------------------------------------------------------
+
             # 模式逻辑
             if mode == "immediate":
                 # 即时复习：Status=2, 按最后复习时间倒序 (或者按 next_review_due 升序?)
@@ -100,11 +123,11 @@ class ExamService:
 
             if not selected_items:
                 exam.exam_status = "failed"
-                exam.generation_error = "没有符合条件的单词可供复习"
+                exam.generation_error = "没有符合条件的单词可供复习（可能单词已在其他未完成的考试中）"
                 session.add(exam)
                 session.commit()
                 # 发送失败消息
-                MessageService.create_message(session, user.id, "考试生成失败", "没有找到符合条件的单词。")
+                MessageService.create_message(session, user.id, "考试生成失败", "没有找到符合条件的单词，或者所有符合条件的单词都已在其他未完成的考试中。")
                 return
 
             # 2. 生成拼写部分 (保存到数据库)
@@ -199,16 +222,26 @@ class ExamService:
         user_id: uuid_pkg.UUID,
         page: int,
         size: int,
-        session: Session
+        session: Session,
+        mode: Optional[str] = None
     ) -> Dict[str, Any]:
         """获取用户考试列表"""
         offset = (page - 1) * size
-        statement = select(Exam).where(Exam.user_id == user_id).order_by(desc(Exam.created_at)).offset(offset).limit(size)
+
+        # Base query
+        query = select(Exam).where(Exam.user_id == user_id)
+        if mode:
+            query = query.where(Exam.mode == mode)
+
+        statement = query.order_by(desc(Exam.created_at)).offset(offset).limit(size)
         exams = session.exec(statement).all()
 
         # Count total
-        count_statement = select(func.count()).select_from(Exam).where(Exam.user_id == user_id)
-        total = session.exec(count_statement).one()
+        count_query = select(func.count()).select_from(Exam).where(Exam.user_id == user_id)
+        if mode:
+            count_query = count_query.where(Exam.mode == mode)
+
+        total = session.exec(count_query).one()
 
         exam_infos = []
         for ex in exams:
