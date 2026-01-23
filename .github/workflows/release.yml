@@ -59,9 +59,9 @@ jobs:
             
             ${{ steps.changelog.outputs.changelog }}
             
-            ## 安装方式
+            ## 启动方式
             ```bash
-            pip install git+https://github.com/${{ github.repository }}.git@${{ steps.changelog.outputs.tag }}
+            uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
             ```
             
             ## 依赖要求
