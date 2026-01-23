@@ -210,13 +210,15 @@ class LLMService:
 
     async def grade_translation(
         self,
-        english_sentence: str,
-        user_translation: str
+        source_text: str,
+        user_translation: str,
+        required_words: List[str] = []
     ) -> Dict[str, Any]:
         """评判翻译（增强错误处理）"""
         prompt = TRANSLATION_GRADING_PROMPT.format(
-            english_sentence=english_sentence,
-            user_translation=user_translation
+            source_text=source_text,
+            user_translation=user_translation,
+            required_words=", ".join(required_words)
         )
 
         try:

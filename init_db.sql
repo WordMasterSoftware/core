@@ -1,12 +1,13 @@
--- WordMaster Database Initialization Script (Refactored Version)
+-- WordMaster Database Initialization Script
 -- Database: wordmaster_db
 -- Username: wordmaster
 --
--- New Design Features:
+-- Features:
 -- 1. Global shared wordbook table
--- 2. User can create multiple word collections (categories)
--- 3. Four-ID design in user_word_items table
--- 4. Cascade delete protection (delete collection -> delete items, but not wordbook)
+-- 2. User-specific word collections
+-- 3. Notification system (messages)
+-- 4. Exam system with spelling and translation sections
+-- 5. Cascade delete protection and automatic word counting
 
 -- 1. Create users table (with LLM configuration)
 CREATE TABLE IF NOT EXISTS users (
@@ -28,7 +29,6 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for users table
 CREATE INDEX IF NOT EXISTS idx_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_email ON users(email);
 
@@ -41,8 +41,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create trigger for users table
-DROP TRIGGER IF EXISTS update_users_updated_at ON users;
 CREATE TRIGGER update_users_updated_at
     BEFORE UPDATE ON users
     FOR EACH ROW
@@ -60,7 +58,6 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for user_sessions table
 CREATE INDEX IF NOT EXISTS idx_session_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_session_token ON user_sessions(token);
 CREATE INDEX IF NOT EXISTS idx_session_expires_at ON user_sessions(expires_at);
@@ -73,7 +70,6 @@ CREATE TABLE IF NOT EXISTS wordbook (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for wordbook table
 CREATE INDEX IF NOT EXISTS idx_word ON wordbook(word);
 CREATE INDEX IF NOT EXISTS idx_wordbook_content ON wordbook USING GIN (content);
 
@@ -90,18 +86,15 @@ CREATE TABLE IF NOT EXISTS word_collections (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for word_collections table
 CREATE INDEX IF NOT EXISTS idx_collections_user_id ON word_collections(user_id);
 CREATE INDEX IF NOT EXISTS idx_collections_created_at ON word_collections(created_at DESC);
 
--- Create trigger for word_collections table
-DROP TRIGGER IF EXISTS update_word_collections_updated_at ON word_collections;
 CREATE TRIGGER update_word_collections_updated_at
     BEFORE UPDATE ON word_collections
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- 5. Create user_word_items table (User word learning items - Four-ID design)
+-- 5. Create user_word_items table (User word learning items)
 CREATE TABLE IF NOT EXISTS user_word_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     collection_id UUID NOT NULL REFERENCES word_collections(id) ON DELETE CASCADE,
@@ -117,57 +110,42 @@ CREATE TABLE IF NOT EXISTS user_word_items (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    -- Unique constraint: cannot add same word twice in same collection
     UNIQUE (collection_id, word_id)
 );
 
--- Create indexes for user_word_items table
 CREATE INDEX IF NOT EXISTS idx_items_collection_id ON user_word_items(collection_id);
 CREATE INDEX IF NOT EXISTS idx_items_user_id ON user_word_items(user_id);
 CREATE INDEX IF NOT EXISTS idx_items_word_id ON user_word_items(word_id);
 CREATE INDEX IF NOT EXISTS idx_items_status ON user_word_items(status);
 CREATE INDEX IF NOT EXISTS idx_items_next_review ON user_word_items(next_review_due) WHERE next_review_due IS NOT NULL;
-
--- Composite indexes for optimizing common queries
 CREATE INDEX IF NOT EXISTS idx_items_collection_status ON user_word_items(collection_id, status);
 CREATE INDEX IF NOT EXISTS idx_items_collection_review ON user_word_items(collection_id, next_review_due) WHERE status < 4;
 
--- Create trigger for user_word_items table
-DROP TRIGGER IF EXISTS update_user_word_items_updated_at ON user_word_items;
 CREATE TRIGGER update_user_word_items_updated_at
     BEFORE UPDATE ON user_word_items
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- 6. Create trigger function to update word_count in word_collections
+-- 6. Trigger to update word_count in word_collections
 CREATE OR REPLACE FUNCTION update_collection_word_count()
 RETURNS TRIGGER AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
-        UPDATE word_collections
-        SET word_count = word_count + 1
-        WHERE id = NEW.collection_id;
+        UPDATE word_collections SET word_count = word_count + 1 WHERE id = NEW.collection_id;
     ELSIF TG_OP = 'DELETE' THEN
-        UPDATE word_collections
-        SET word_count = word_count - 1
-        WHERE id = OLD.collection_id;
+        UPDATE word_collections SET word_count = word_count - 1 WHERE id = OLD.collection_id;
     END IF;
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
--- Create triggers to automatically update word_count
-DROP TRIGGER IF EXISTS update_collection_count_on_insert ON user_word_items;
 CREATE TRIGGER update_collection_count_on_insert
     AFTER INSERT ON user_word_items
-    FOR EACH ROW
-    EXECUTE FUNCTION update_collection_word_count();
+    FOR EACH ROW EXECUTE FUNCTION update_collection_word_count();
 
-DROP TRIGGER IF EXISTS update_collection_count_on_delete ON user_word_items;
 CREATE TRIGGER update_collection_count_on_delete
     AFTER DELETE ON user_word_items
-    FOR EACH ROW
-    EXECUTE FUNCTION update_collection_word_count();
+    FOR EACH ROW EXECUTE FUNCTION update_collection_word_count();
 
 -- 7. Create messages table (Notification system)
 CREATE TABLE IF NOT EXISTS messages (
@@ -179,32 +157,60 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for messages table
 CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
 
--- 8. Drop old table if exists (for migration from old version)
+-- 8. Create exams table
+CREATE TABLE IF NOT EXISTS exams (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    collection_id UUID NOT NULL REFERENCES word_collections(id) ON DELETE CASCADE,
+    exam_status VARCHAR(20) DEFAULT 'pending' CHECK (exam_status IN ('pending', 'generated', 'grading', 'completed', 'failed')),
+    mode VARCHAR(20) DEFAULT 'immediate',
+    total_words INTEGER NOT NULL,
+    spelling_words_count INTEGER NOT NULL,
+    translation_sentences_count INTEGER NOT NULL,
+    generation_error TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_exams_user_id ON exams(user_id);
+CREATE INDEX IF NOT EXISTS idx_exams_collection_id ON exams(collection_id);
+CREATE INDEX IF NOT EXISTS idx_exams_status ON exams(exam_status);
+
+-- 9. Create exam_spelling_sections table
+CREATE TABLE IF NOT EXISTS exam_spelling_sections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    exam_id UUID NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+    word_id UUID NOT NULL REFERENCES wordbook(id) ON DELETE CASCADE,
+    item_id UUID REFERENCES user_word_items(id) ON DELETE CASCADE,
+    chinese_meaning TEXT NOT NULL,
+    english_answer TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_exam_spelling_exam_id ON exam_spelling_sections(exam_id);
+CREATE INDEX IF NOT EXISTS idx_exam_spelling_word_id ON exam_spelling_sections(word_id);
+CREATE INDEX IF NOT EXISTS idx_exam_spelling_item_id ON exam_spelling_sections(item_id);
+
+-- 10. Create exam_translation_sections table
+CREATE TABLE IF NOT EXISTS exam_translation_sections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    exam_id UUID NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+    sentence_id VARCHAR(50) NOT NULL,
+    chinese_sentence TEXT NOT NULL,
+    words_involved UUID[], -- Array of UUIDs from wordbook/items
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_exam_translation_exam_id ON exam_translation_sections(exam_id);
+
+-- 11. Cleanup and Success Message
 DROP TABLE IF EXISTS user_progress CASCADE;
 
--- Success message
 DO $$
 BEGIN
-    RAISE NOTICE '==============================================';
     RAISE NOTICE 'WordMaster Database Initialization Completed!';
-    RAISE NOTICE '==============================================';
-    RAISE NOTICE 'Tables created:';
-    RAISE NOTICE '  1. users (with LLM configuration)';
-    RAISE NOTICE '  2. user_sessions';
-    RAISE NOTICE '  3. wordbook (Global shared word library)';
-    RAISE NOTICE '  4. word_collections (Word categories) - NEW';
-    RAISE NOTICE '  5. user_word_items (Four-ID design) - NEW';
-    RAISE NOTICE '  6. messages (Notification system) - NEW';
-    RAISE NOTICE '';
-    RAISE NOTICE 'Features:';
-    RAISE NOTICE '  - Global shared wordbook saves storage and LLM API cost';
-    RAISE NOTICE '  - Support multiple word collection categories';
-    RAISE NOTICE '  - Four-ID design (item_id, collection_id, user_id, word_id)';
-    RAISE NOTICE '  - Cascade delete protection (delete collection -> delete items, not wordbook)';
-    RAISE NOTICE '  - Auto update word count (trigger)';
-    RAISE NOTICE '==============================================';
+    RAISE NOTICE 'Tables created: users, sessions, wordbook, collections, items, messages, exams, exam_sections';
 END $$;

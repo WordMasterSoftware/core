@@ -4,6 +4,7 @@ from app.models.wordbook import WordBook
 from app.models.word_collection import WordCollection
 from app.models.user_word_item import UserWordItem
 from app.models.message import Message
+from app.models.exam import Exam, ExamSpellingSection, ExamTranslationSection
 
 __all__ = [
     "User",
@@ -11,5 +12,8 @@ __all__ = [
     "WordBook",
     "WordCollection",
     "UserWordItem",
-    "Message"
+    "Message",
+    "Exam",
+    "ExamSpellingSection",
+    "ExamTranslationSection"
 ]

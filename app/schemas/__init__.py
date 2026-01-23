@@ -12,8 +12,11 @@ from app.schemas.study import (
     StudySubmit, StudySubmitResponse
 )
 from app.schemas.exam import (
-    SpellingQuestion, TranslationQuestion, ExamGenerate,
-    ExamResponse, ExamSubmit, TranslationResult, ExamResult
+    SpellingQuestion, TranslationQuestion,
+    ExamGenerateRequest, ExamGenerateResponse,
+    ExamLoadRequest, ExamLoadResponse,
+    ExamSubmitRequest, ExamSubmitResponse,
+    ExamInfo, ExamListResponse, ExamDetailResponse
 )
 from app.schemas.collection import (
     CollectionCreate, CollectionUpdate, CollectionResponse,
@@ -28,8 +31,11 @@ __all__ = [
     "WordListResponse",
     "StudyMode", "StudyWord", "StudySessionResponse",
     "StudySubmit", "StudySubmitResponse",
-    "SpellingQuestion", "TranslationQuestion", "ExamGenerate",
-    "ExamResponse", "ExamSubmit", "TranslationResult", "ExamResult",
+    "SpellingQuestion", "TranslationQuestion",
+    "ExamGenerateRequest", "ExamGenerateResponse",
+    "ExamLoadRequest", "ExamLoadResponse",
+    "ExamSubmitRequest", "ExamSubmitResponse",
+    "ExamInfo", "ExamListResponse", "ExamDetailResponse",
     "CollectionCreate", "CollectionUpdate", "CollectionResponse",
     "CollectionListResponse", "WordsImportToCollection"
 ]
