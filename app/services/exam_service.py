@@ -360,7 +360,7 @@ class ExamService:
             "total_words": exam.total_words,
             "spelling_words_count": exam.spelling_words_count,
             "translation_sentences_count": exam.translation_sentences_count,
-            "estimated_duration_minutes": exam.total_words, # 1 min per word rule
+            "estimated_duration_minutes": exam.spelling_words_count, # 1 min per word rule
             "created_at": exam.created_at,
             "completed_at": exam.completed_at,
             "spelling_section": spelling_list,
