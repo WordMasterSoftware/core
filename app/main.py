@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import create_db_and_tables
-from app.api import auth, words, study, exam, tts, collections, messages
+from app.api import auth, words, study, exam, tts, collections, messages, dashboard
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -67,6 +67,7 @@ app.include_router(study.router)
 app.include_router(exam.router)
 app.include_router(tts.router)
 app.include_router(messages.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/")

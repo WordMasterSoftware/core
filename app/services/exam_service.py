@@ -37,12 +37,36 @@ class ExamService:
     def check_review_availability(user_id: uuid_pkg.UUID, collection_id: uuid_pkg.UUID, mode: str, session: Session) -> int:
         """检查是否有足够的单词进行复习（排除已在进行中考试的单词）"""
 
+        # 特殊逻辑：完全复习 (Complete)
+        if mode == "complete":
+            # 1. 锁定机制：如果有未完成的完全复习，不允许生成新的
+            has_active_complete = session.exec(select(Exam).where(
+                Exam.user_id == user_id,
+                Exam.mode == "complete",
+                Exam.exam_status.in_(["pending", "generated", "grading"])
+            )).first()
+
+            if has_active_complete:
+                return 0
+
+            # 2. 前置条件：单词本中所有单词状态必须 >= 3 (已掌握/已完成)
+            unmastered_count = session.exec(
+                select(func.count()).select_from(UserWordItem).where(
+                    UserWordItem.user_id == user_id,
+                    UserWordItem.collection_id == collection_id,
+                    UserWordItem.status < 3
+                )
+            ).one()
+
+            if unmastered_count > 0:
+                return 0
+
         # 1. 查找当前用户所有未完成的同类型考试
         active_exams = session.exec(
             select(Exam.id).where(
                 Exam.user_id == user_id,
                 Exam.mode == mode, # 仅排除同模式的考试
-                Exam.exam_status.in_(["generated", "grading"])
+                Exam.exam_status.in_(["generated", "grading", "pending"])
             )
         ).all()
 
