@@ -68,6 +68,7 @@ class ExamInfo(BaseModel):
     spelling_words_count: int
     translation_sentences_count: int
     exam_status: str
+    mode: str
     created_at: datetime
     completed_at: Optional[datetime] = None
 

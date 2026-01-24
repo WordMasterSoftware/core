@@ -65,8 +65,11 @@ class ExamService:
 
         if mode == "complete":
             query = query.where(UserWordItem.status == 3)
+        elif mode == "random":
+            # 随机复习：复习中(2) 或 已完成(4)
+            query = query.where(UserWordItem.status.in_([2, 4]))
         else:
-            # immediate or random: status = 2
+            # immediate: status = 2
             query = query.where(UserWordItem.status == 2)
 
         return session.exec(query).one()
@@ -76,7 +79,8 @@ class ExamService:
         exam_id: uuid_pkg.UUID,
         mode: str,
         target_count: int,
-        session: Session
+        session: Session,
+        specific_item_ids: Optional[List[uuid_pkg.UUID]] = None
     ):
         """后台任务：执行考试生成逻辑"""
         try:
@@ -94,53 +98,61 @@ class ExamService:
                 UserWordItem.user_id == exam.user_id
             )
 
-            # --- 排除已在其他未完成考试（generated, grading）中使用的单词 ---
-            # 仅针对 'immediate' 模式执行严格去重
-            if mode == 'immediate':
-                # 1. 查找当前用户所有未完成的考试
-                active_exams = session.exec(
-                    select(Exam.id).where(
-                        Exam.user_id == exam.user_id,
-                        # Exam.mode == mode, # 移除模式限制，即时复习应排除所有占用
-                        Exam.exam_status.in_(["generated", "grading"]),
-                        Exam.id != exam.id  # 排除自己
-                    )
-                ).all()
+            # --- 如果指定了具体的 Item IDs (用于完全复习等预先分配场景) ---
+            if specific_item_ids:
+                query = query.where(UserWordItem.id.in_(specific_item_ids))
 
-                if active_exams:
-                    # 2. 查找这些考试已经包含的 word_id (从 ExamSpellingSection 表查)
-                    active_word_ids = session.exec(
-                        select(ExamSpellingSection.word_id).where(
-                            ExamSpellingSection.exam_id.in_(active_exams)
+            else:
+                # --- 排除已在其他未完成考试（generated, grading）中使用的单词 ---
+                # 仅针对 'immediate' 模式执行严格去重
+                if mode == 'immediate':
+                    # 1. 查找当前用户所有未完成的考试
+                    active_exams = session.exec(
+                        select(Exam.id).where(
+                            Exam.user_id == exam.user_id,
+                            # Exam.mode == mode, # 移除模式限制，即时复习应排除所有占用
+                            Exam.exam_status.in_(["generated", "grading"]),
+                            Exam.id != exam.id  # 排除自己
                         )
                     ).all()
 
-                    if active_word_ids:
-                        # 3. 在本次查询中排除这些 word_id
-                        query = query.where(UserWordItem.word_id.notin_(active_word_ids))
-            # -----------------------------------------------------------
+                    if active_exams:
+                        # 2. 查找这些考试已经包含的 word_id (从 ExamSpellingSection 表查)
+                        active_word_ids = session.exec(
+                            select(ExamSpellingSection.word_id).where(
+                                ExamSpellingSection.exam_id.in_(active_exams)
+                            )
+                        ).all()
 
-            # 模式逻辑
-            if mode == "immediate":
-                # 即时复习：Status=2, 按最后复习时间倒序 (或者按 next_review_due 升序?)
-                # 需求设计: "挑选20个最近更新（last_review_time）且状态为复习中（status为2）"
-                # 最近更新意味着 last_review_time 越大越靠前
-                query = query.where(UserWordItem.status == 2).order_by(desc(UserWordItem.last_review_time))
-            elif mode == "random":
-                # 随机复习：Status=2, 随机
-                query = query.where(UserWordItem.status == 2)
-            elif mode == "complete":
-                # 完全复习：Status=3, 打乱 (根据需求 Line 8: "所有考试单词均来自状态为 3 的单词中" - 但 Line 31 说是完全复习)
-                # 综合判断: 完全复习针对 Status 3 (Ready for Final), 成功后 -> 4
-                query = query.where(UserWordItem.status == 3)
-            else:
-                # 默认 fallback
-                query = query.where(UserWordItem.status == 2)
+                        if active_word_ids:
+                            # 3. 在本次查询中排除这些 word_id
+                            query = query.where(UserWordItem.word_id.notin_(active_word_ids))
+                # -----------------------------------------------------------
+
+                # 模式逻辑
+                if mode == "immediate":
+                    # 即时复习：Status=2, 按最后复习时间倒序
+                    query = query.where(UserWordItem.status == 2).order_by(desc(UserWordItem.last_review_time))
+                elif mode == "random":
+                    # 随机复习：Status=2 (复习中) 或 Status=4 (已完成)
+                    query = query.where(UserWordItem.status.in_([2, 4]))
+                elif mode == "complete":
+                    # 完全复习：Status=3
+                    query = query.where(UserWordItem.status == 3)
+                else:
+                    # 默认 fallback
+                    query = query.where(UserWordItem.status == 2)
 
             all_items = session.exec(query).all()
 
             # 选择单词
-            if mode == "random" or mode == "complete":
+            if specific_item_ids:
+                 # 如果指定了ID，则使用查询到的所有结果
+                selected_items = all_items
+            elif mode == "random":
+                selected_items = random.sample(all_items, min(target_count, len(all_items)))
+            elif mode == "complete":
+                 # Fallback if no specific ids provided for complete
                 selected_items = random.sample(all_items, min(target_count, len(all_items)))
             else:
                 # immediate 已经排序过，取前N个
@@ -214,7 +226,7 @@ class ExamService:
             MessageService.create_message(
                 session,
                 user.id,
-                "即时复习 - 考试生成完成",
+                "复习试卷生成完成",
                 f"您的复习试卷已生成！包含 {len(selected_items)} 个单词和 {len(generated_sentences)} 个句子。请前往复习列表查看。"
             )
 
@@ -226,6 +238,69 @@ class ExamService:
                 session.add(exam)
                 session.commit()
                 MessageService.create_message(session, exam.user_id, "考试生成失败", f"系统错误: {str(e)}")
+
+    @staticmethod
+    def prepare_complete_review_exams(
+        user_id: uuid_pkg.UUID,
+        collection_id: uuid_pkg.UUID,
+        session: Session
+    ) -> List[tuple[Exam, List[uuid_pkg.UUID]]]:
+        """准备完全复习的试卷（创建记录并分配单词，但不生成内容）"""
+        # 1. 查询所有状态为3的单词
+        query = select(UserWordItem).where(
+            UserWordItem.user_id == user_id,
+            UserWordItem.collection_id == collection_id,
+            UserWordItem.status == 3
+        )
+        items = session.exec(query).all()
+        N = len(items)
+        if N == 0:
+            return []
+
+        # 2. 确定分卷数量 K
+        if N < 50:
+            K = 1
+        elif N < 150:
+            K = 2
+        elif N < 300:
+            K = 5
+        else:
+            K = 10
+
+        # 3. 随机打乱
+        items_list = list(items)
+        random.shuffle(items_list)
+
+        # 4. 分割并创建试卷
+        # 使用取模方式分配，确保均匀
+        chunks = [[] for _ in range(K)]
+        for i, item in enumerate(items_list):
+            chunks[i % K].append(item)
+
+        result = []
+        for i, chunk in enumerate(chunks):
+            if not chunk:
+                continue
+
+            # 创建试卷记录
+            # 注意：完全复习生成的试卷初始状态为 pending
+            exam = Exam(
+                user_id=user_id,
+                collection_id=collection_id,
+                mode="complete",
+                exam_status="pending",
+                total_words=len(chunk),
+                spelling_words_count=len(chunk),
+                translation_sentences_count=0
+            )
+            session.add(exam)
+            session.commit()
+            session.refresh(exam)
+
+            item_ids = [item.id for item in chunk]
+            result.append((exam, item_ids))
+
+        return result
 
     @staticmethod
     def get_user_exams(
@@ -267,6 +342,7 @@ class ExamService:
                 "spelling_words_count": ex.spelling_words_count,
                 "translation_sentences_count": ex.translation_sentences_count,
                 "exam_status": ex.exam_status,
+                "mode": ex.mode,
                 "created_at": ex.created_at,
                 "completed_at": ex.completed_at
             })
@@ -281,43 +357,6 @@ class ExamService:
             }
         }
 
-    @staticmethod
-    def check_review_availability(user_id: uuid_pkg.UUID, collection_id: uuid_pkg.UUID, mode: str, session: Session) -> int:
-        """检查是否有足够的单词进行复习（排除已在进行中考试的单词）"""
-
-        # 1. 查找当前用户所有未完成的同类型考试
-        active_exams = session.exec(
-            select(Exam.id).where(
-                Exam.user_id == user_id,
-                Exam.mode == mode, # 仅排除同模式的考试
-                Exam.exam_status.in_(["generated", "grading"])
-            )
-        ).all()
-
-        active_word_ids = []
-        if active_exams:
-             active_word_ids = session.exec(
-                select(ExamSpellingSection.word_id).where(
-                    ExamSpellingSection.exam_id.in_(active_exams)
-                )
-            ).all()
-
-        # 2. 构建查询
-        query = select(func.count()).select_from(UserWordItem).where(
-            UserWordItem.user_id == user_id,
-            UserWordItem.collection_id == collection_id
-        )
-
-        if active_word_ids:
-            query = query.where(UserWordItem.word_id.notin_(active_word_ids))
-
-        if mode == "complete":
-            query = query.where(UserWordItem.status == 3)
-        else:
-            # immediate or random: status = 2
-            query = query.where(UserWordItem.status == 2)
-
-        return session.exec(query).one()
     @staticmethod
     def get_exam_detail(exam_id: uuid_pkg.UUID, session: Session) -> Optional[Dict[str, Any]]:
         """获取考试详情（包含题目预览）"""
@@ -367,43 +406,6 @@ class ExamService:
             "translation_section": translation_list
         }
 
-    @staticmethod
-    def check_review_availability(user_id: uuid_pkg.UUID, collection_id: uuid_pkg.UUID, mode: str, session: Session) -> int:
-        """检查是否有足够的单词进行复习（排除已在进行中考试的单词）"""
-
-        # 1. 查找当前用户所有未完成的同类型考试
-        active_exams = session.exec(
-            select(Exam.id).where(
-                Exam.user_id == user_id,
-                Exam.mode == mode, # 仅排除同模式的考试
-                Exam.exam_status.in_(["generated", "grading"])
-            )
-        ).all()
-
-        active_word_ids = []
-        if active_exams:
-             active_word_ids = session.exec(
-                select(ExamSpellingSection.word_id).where(
-                    ExamSpellingSection.exam_id.in_(active_exams)
-                )
-            ).all()
-
-        # 2. 构建查询
-        query = select(func.count()).select_from(UserWordItem).where(
-            UserWordItem.user_id == user_id,
-            UserWordItem.collection_id == collection_id
-        )
-
-        if active_word_ids:
-            query = query.where(UserWordItem.word_id.notin_(active_word_ids))
-
-        if mode == "complete":
-            query = query.where(UserWordItem.status == 3)
-        else:
-            # immediate or random: status = 2
-            query = query.where(UserWordItem.status == 2)
-
-        return session.exec(query).one()
     @staticmethod
     def mark_exam_as_grading(exam_id: uuid_pkg.UUID, session: Session):
         """将考试状态标记为阅卷中"""

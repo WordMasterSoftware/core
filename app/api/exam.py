@@ -30,6 +30,47 @@ async def generate_exam(
     - 后台触发生成任务
     """
     # 0. 检查是否满足生成条件 (至少10个单词)
+    # 对于 complete 模式，逻辑稍有不同，由 service 内部处理分卷
+    if exam_data.mode == 'complete':
+        # 1. 准备试卷 (同步创建记录)
+        try:
+            exam_data_list = ExamService.prepare_complete_review_exams(
+                user_id=current_user.id,
+                collection_id=exam_data.collection_id,
+                session=session
+            )
+        except Exception as e:
+             return ExamGenerateResponse(
+                success=False,
+                message=f"生成失败: {str(e)}",
+                exam_generation_status="failed"
+            )
+
+        if not exam_data_list:
+             return ExamGenerateResponse(
+                success=False,
+                message="当前没有符合完全复习条件（已掌握）的单词，无法生成试卷。",
+                exam_generation_status="failed"
+            )
+
+        # 2. 批量添加后台任务
+        for exam, item_ids in exam_data_list:
+            background_tasks.add_task(
+                ExamService.process_exam_generation,
+                exam_id=exam.id,
+                mode='complete',
+                target_count=exam.total_words,
+                session=session,
+                specific_item_ids=item_ids
+            )
+
+        return ExamGenerateResponse(
+            success=True,
+            message=f"成功创建 {len(exam_data_list)} 套完全复习试卷，正在后台生成内容...",
+            exam_generation_status="processing"
+        )
+
+    # 其他模式 (Immediate, Random)
     available_count = ExamService.check_review_availability(
         user_id=current_user.id,
         collection_id=exam_data.collection_id,
