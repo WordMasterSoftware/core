@@ -10,6 +10,7 @@ from app.schemas.collection import (
     WordsImportToCollection,
     WordsImportTaskResponse
 )
+from app.schemas.marketplace import MarketplaceBookImport
 from app.services.collection_service import CollectionService
 from app.services.word_service import WordService
 from app.utils.dependencies import get_current_user
@@ -143,6 +144,48 @@ async def import_words_to_collection(
     return WordsImportTaskResponse(
         success=True,
         message="导入任务已提交，请稍后在消息中心查看结果",
+        task_id=task_id
+    )
+
+
+@router.post("/import-json", response_model=WordsImportTaskResponse, status_code=202)
+async def import_marketplace_json(
+    import_request: MarketplaceBookImport,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    从 Marketplace JSON 导入并自动创建单词本 (异步任务)
+
+    - 接收完整的 Marketplace JSON 数据
+    - 自动创建一个同名单词本
+    - 后台复用 JSON 中的释义导入单词，不消耗 LLM Token
+    """
+    # 1. 自动创建单词本
+    collection = await CollectionService.create_collection(
+        user_id=current_user.id,
+        name=import_request.name,
+        description=import_request.description,
+        color=import_request.color or "#3B82F6",
+        icon=import_request.icon or "BookOpenIcon",
+        session=session
+    )
+
+    # 2. 生成任务ID
+    task_id = uuid_pkg.uuid4()
+
+    # 3. 添加后台任务
+    background_tasks.add_task(
+        WordService.import_marketplace_book_background_task,
+        user_id=current_user.id,
+        collection_id=collection.id,
+        marketplace_data=import_request.model_dump()
+    )
+
+    return WordsImportTaskResponse(
+        success=True,
+        message=f"已创建单词本 '{collection.name}' 并开始导入",
         task_id=task_id
     )
 

@@ -88,6 +88,170 @@ class WordService:
                     logger.error(f"Failed to send error notification: {inner_e}")
 
     @staticmethod
+    async def import_marketplace_book_background_task(
+        user_id: uuid_pkg.UUID,
+        collection_id: uuid_pkg.UUID,
+        marketplace_data: Dict[str, Any]
+    ):
+        """
+        后台任务：处理Marketplace单词本导入
+        """
+        logger.info(f"Starting marketplace import task for user {user_id}, collection {collection_id}")
+
+        with Session(engine) as session:
+            try:
+                user = session.get(User, user_id)
+                if not user:
+                    logger.error(f"User {user_id} not found during marketplace import")
+                    return
+
+                collection = session.get(WordCollection, collection_id)
+                if not collection:
+                    logger.error(f"Collection {collection_id} not found during marketplace import")
+                    MessageService.create_message(
+                        session=session,
+                        user_id=user_id,
+                        title="单词导入失败",
+                        content="目标单词本不存在或已被删除。"
+                    )
+                    return
+
+                result = await WordService.import_marketplace_book(
+                    user=user,
+                    collection_id=collection_id,
+                    marketplace_data=marketplace_data,
+                    session=session
+                )
+
+                # 构建通知内容 (已移除，前端直接提示)
+                # title = "单词本导入完成"
+                # ...
+                # MessageService.create_message(...)
+
+                logger.info(f"Marketplace import task completed for user {user_id}")
+
+            except Exception as e:
+                logger.error(f"Error in marketplace import task: {e}", exc_info=True)
+                try:
+                    MessageService.create_message(
+                        session=session,
+                        user_id=user_id,
+                        title="导入失败",
+                        content=f"处理过程中发生错误: {str(e)}"
+                    )
+                except Exception as inner_e:
+                    logger.error(f"Failed to send error notification: {inner_e}")
+
+    @staticmethod
+    async def import_marketplace_book(
+        user: User,
+        collection_id: uuid_pkg.UUID,
+        marketplace_data: Dict[str, Any],
+        session: Session
+    ) -> Dict[str, Any]:
+        """
+        导入Marketplace数据（使用JSON中的释义，不调用LLM）
+        """
+        from app.schemas.marketplace import MarketplaceBookImport
+
+        # 验证并转换输入数据
+        book_data = MarketplaceBookImport(**marketplace_data)
+
+        # 准备单词映射字典 {word_str: detail_obj}
+        market_words_map = {w.word.lower().strip(): w for w in book_data.words if w.word.strip()}
+        unique_words = list(market_words_map.keys())
+
+        if not unique_words:
+            return {"imported": 0, "duplicates": 0, "reused": 0, "created_from_json": 0, "total": 0, "failed": 0}
+
+        # 检查该单词本中已有的单词（避免重复导入）
+        collection_items_statement = select(UserWordItem, WordBook).join(
+            WordBook, UserWordItem.word_id == WordBook.id
+        ).where(
+            UserWordItem.collection_id == collection_id,
+            WordBook.word.in_(unique_words)
+        )
+        collection_existing = session.exec(collection_items_statement).all()
+        collection_existing_words = {word.word for _, word in collection_existing}
+
+        # 筛选出该单词本未导入的单词
+        words_to_import = [w for w in unique_words if w not in collection_existing_words]
+
+        if not words_to_import:
+            return {
+                "imported": 0,
+                "duplicates": len(collection_existing_words),
+                "reused": 0,
+                "created_from_json": 0,
+                "total": len(unique_words),
+                "failed": 0
+            }
+
+        # 检查全局 WordBook 数据库
+        wordbook_statement = select(WordBook).where(WordBook.word.in_(words_to_import))
+        existing_in_db = session.exec(wordbook_statement).all()
+        existing_in_db_map = {w.word: w for w in existing_in_db}
+
+        # 区分：可复用的单词 vs 需要新建的单词
+        words_to_reuse = [w for w in words_to_import if w in existing_in_db_map]
+        words_to_create = [w for w in words_to_import if w not in existing_in_db_map]
+
+        created_count = 0
+        new_word_entries = []
+
+        # 处理需要新建的单词 - 使用 JSON 中的数据
+        for word_str in words_to_create:
+            detail = market_words_map[word_str]
+            # 构造符合 WordBook.content 格式的 JSON
+            content_json = {
+                "chinese": detail.chinese,
+                "phonetic": detail.phonetic or "",
+                "part_of_speech": detail.part_of_speech or "",
+                "sentences": detail.sentences or []
+            }
+
+            word_entry = WordBook(
+                word=word_str,
+                content=content_json
+            )
+            session.add(word_entry)
+            new_word_entries.append(word_entry)
+            created_count += 1
+
+        # 提交以生成 ID
+        if new_word_entries:
+            session.commit()
+            for w in new_word_entries:
+                session.refresh(w)
+
+            # 将新创建的也加入到 existing_in_db_map 方便后续处理
+            for w in new_word_entries:
+                existing_in_db_map[w.word] = w
+
+        # 为用户在该单词本中创建学习条目
+        # 包含：复用的 + 新创建的 (words_to_reuse + words_to_create = words_to_import)
+        for word_str in words_to_import:
+            word_entry = existing_in_db_map[word_str]
+            item = UserWordItem(
+                collection_id=collection_id,
+                user_id=user.id,
+                word_id=word_entry.id,
+                status=0
+            )
+            session.add(item)
+
+        session.commit()
+
+        return {
+            "imported": len(words_to_import),
+            "duplicates": len(collection_existing_words),
+            "reused": len(words_to_reuse),
+            "created_from_json": created_count,
+            "total": len(unique_words),
+            "failed": 0
+        }
+
+    @staticmethod
     async def import_words_to_collection(
         user: User,
         collection_id: uuid_pkg.UUID,
