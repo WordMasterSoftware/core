@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:18-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=wordmaster
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    ports:
+      - "5432:5432"
+
+  backend:
+    build: .
+    restart: always
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    env_file:
+      - .env
+    environment:
+      # Override host-based DATABASE_URL to use the docker service name 'db'
+      - DATABASE_URL=postgresql://wordmaster:password@db:5432/postgres
+    volumes:
+      - ./tts_cache:/app/tts_cache
+
+volumes:
+  postgres_data:
