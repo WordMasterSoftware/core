@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     TTS_RATE: str = "+0%"
     TTS_CACHE_DIR: str = "./tts_cache"
 
+    # Development Token (Skip auth for testing)
+    DEV_TOKEN: str = ""
+
     class Config:
         env_file = ".env"
         case_sensitive = False

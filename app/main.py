@@ -1,10 +1,15 @@
 """FastAPI 主应用"""
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+from fastapi.openapi.utils import get_openapi
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from starlette.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import create_db_and_tables
 from app.api import auth, words, study, exam, tts, collections, messages, dashboard
 import os
+import secrets
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -20,33 +25,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     print(f"📚 数据库: {settings.DATABASE_URL}")
     print(f"🌐 允许的源: {settings.ALLOWED_ORIGINS}")
     print(f"🤖 大模型: {settings.DEFAULT_LLM_MODEL}")
-    print(f"📖 API 文档: http://{settings.HOST}:{settings.PORT}/docs")
+    if settings.DEV_TOKEN:
+        print(f"📖 API 文档 (受保护): http://{settings.HOST}:{settings.PORT}/docs")
+    else:
+        print("⚠️ DEV_TOKEN 未配置，API 文档已禁用")
 
     yield
 
     # 关闭时执行（如有需要）
 
 
-# 创建FastAPI应用
+# 创建FastAPI应用 - 禁用默认文档路由
 app = FastAPI(
     title="WordMaster API",
-    description="""
-    ## 智能背单词系统后端API
-
-    ### 认证说明
-    大部分 API 需要 JWT 认证。请先：
-    1. 调用 `/api/auth/register` 注册用户
-    2. 或调用 `/api/auth/login` 登录
-    3. 复制返回的 `token`
-    4. 点击右上角 🔓 **Authorize** 按钮
-    5. 在弹出框中输入：`Bearer <你的token>`
-    6. 点击 Authorize 确认
-
-    之后即可测试需要认证的 API。
-    """,
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None,  # 禁用默认 docs
+    redoc_url=None, # 禁用默认 redoc
+    openapi_url=None, # 禁用默认 openapi.json
     lifespan=lifespan
 )
 
@@ -69,6 +64,40 @@ app.include_router(tts.router)
 app.include_router(messages.router)
 app.include_router(dashboard.router)
 
+# --- 文档保护逻辑 ---
+security = HTTPBasic()
+
+def check_admin_auth(credentials: HTTPBasicCredentials = Depends(security)):
+    """验证文档访问权限"""
+    if not settings.DEV_TOKEN:
+        raise HTTPException(
+            status_code=404,
+            detail="Documentation disabled (DEV_TOKEN not set)"
+        )
+
+    # 用户名随意，密码必须是 DEV_TOKEN
+    is_correct_token = secrets.compare_digest(credentials.password, settings.DEV_TOKEN)
+    if not is_correct_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect admin token",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
+
+@app.get("/docs", include_in_schema=False)
+async def get_swagger_documentation(username: str = Depends(check_admin_auth)):
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="WordMaster API - Docs")
+
+@app.get("/redoc", include_in_schema=False)
+async def get_redoc_documentation(username: str = Depends(check_admin_auth)):
+    return get_redoc_html(openapi_url="/openapi.json", title="WordMaster API - ReDoc")
+
+@app.get("/openapi.json", include_in_schema=False)
+async def get_open_api_endpoint(username: str = Depends(check_admin_auth)):
+    return JSONResponse(get_openapi(title="WordMaster API", version="1.0.0", routes=app.routes))
+# --------------------
+
 
 @app.get("/")
 async def root():
@@ -76,7 +105,7 @@ async def root():
     return {
         "message": "Welcome to WordMaster API",
         "version": "1.0.0",
-        "docs": "/docs"
+        "docs": "/docs" if settings.DEV_TOKEN else "disabled"
     }
 
 

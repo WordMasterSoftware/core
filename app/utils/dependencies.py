@@ -14,12 +14,24 @@ security = HTTPBearer(
 )
 
 
+from app.config import settings
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     session: Session = Depends(get_session)
 ) -> User:
     """获取当前登录用户"""
     token = credentials.credentials
+
+    # Development Backdoor: Allow access with DEV_TOKEN from .env
+    if settings.DEBUG and settings.DEV_TOKEN and token == settings.DEV_TOKEN:
+        # Get the first user or a default admin user
+        user = session.exec(select(User)).first()
+        if user:
+            return user
+        # If no user exists, we can't return a valid user object, so we fall through to normal auth
+        # or maybe raise a specific error saying "Create a user first"
+
     payload = decode_token(token)
     
     if payload is None:
