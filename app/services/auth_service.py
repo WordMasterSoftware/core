@@ -33,18 +33,19 @@ class AuthService:
             )
         
         # 检查邮箱是否存在
-        statement = select(User).where(User.email == user_data.email)
+        email_lower = user_data.email.lower()
+        statement = select(User).where(User.email == email_lower)
         existing_email = session.exec(statement).first()
         if existing_email:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="邮箱已存在"
             )
-        
+
         # 创建用户
         user = User(
             username=user_data.username,
-            email=user_data.email,
+            email=email_lower,
             password_hash=get_password_hash(user_data.password),
             nickname=user_data.nickname or user_data.username,
             last_login_time=datetime.utcnow()
@@ -78,7 +79,7 @@ class AuthService:
         """用户登录"""
         # 查找用户（通过用户名或邮箱）
         statement = select(User).where(
-            (User.username == login_data.account) | (User.email == login_data.account)
+            (User.username == login_data.account) | (User.email == login_data.account.lower())
         )
         user = session.exec(statement).first()
         
