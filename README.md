@@ -17,19 +17,6 @@ cp .env.example .env  # 配置您的环境变量
 docker-compose up -d
 ```
 
-
-**选项2：使用预构建的镜像一键启动（推荐）**
-
-您可以直接拉取并使用预构建的镜像，而无需本地构建：
-
-```bash
-# 拉取最新镜像
-docker pull ghcr.io/wordmastersoftware/core:latest
-
-# 启动服务（使用预构建镜像）
-docker-compose up -d
-```
-
 服务将在 `http://localhost:8000` 启动
 
 
