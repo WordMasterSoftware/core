@@ -4,6 +4,35 @@ WordMaster 智能背单词系统后端 API
 
 ## 🚀 快速开始
 
+**选项1：使用预构建的Docker镜像**
+
+如果您只想快速运行WordMaster后端，可以直接使用预构建的Docker镜像：
+
+```bash
+# 拉取最新镜像
+docker pull ghcr.io/wordmastersoftware/core:latest
+
+# 启动服务（需要先配置.env文件）
+cp .env.example .env  # 配置您的环境变量
+docker-compose up -d
+```
+
+
+**选项2：使用预构建的镜像一键启动（推荐）**
+
+您可以直接拉取并使用预构建的镜像，而无需本地构建：
+
+```bash
+# 拉取最新镜像
+docker pull ghcr.io/wordmastersoftware/core:latest
+
+# 启动服务（使用预构建镜像）
+docker-compose up -d
+```
+
+服务将在 `http://localhost:8000` 启动
+
+
 ### 1. 环境要求
 
 - Python 3.10+
@@ -258,6 +287,22 @@ PUT /api/auth/llm-config
 
 我们提供了 `docker-compose.yml` 以便快速启动完整的应用环境（包含数据库）。
 
+**选项1：使用预构建的镜像（推荐）**
+
+您可以直接拉取并使用预构建的镜像，而无需本地构建：
+
+```bash
+# 拉取最新镜像
+docker pull ghcr.io/wordmastersoftware/core:latest
+
+# 启动服务（使用预构建镜像）
+docker-compose up -d
+```
+
+**选项2：从源码构建**
+
+如果您想从源码构建镜像：
+
 1. **准备配置文件**
 
    复制示例配置并根据需要修改（如 LLM API Key）：
@@ -291,6 +336,12 @@ PUT /api/auth/llm-config
    ```bash
    docker-compose down
    ```
+
+**使用预构建镜像的优势**
+
+- 更快的部署速度：无需本地构建时间
+- 一致的运行环境：使用官方发布的镜像
+- 减少本地依赖：不需要安装Python等依赖项
 
 ### 传统 Docker 运行
 
