@@ -7,7 +7,7 @@ import uuid as uuid_pkg
 
 # 创建单词本请求
 class CollectionCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100, description="单词本名称")
+    name: str = Field(..., min_length=1, max_length=30, description="单词本名称")
     description: Optional[str] = Field(None, max_length=350, description="单词本描述")
     color: Optional[str] = Field(None, max_length=20, description="颜色标识")
     icon: Optional[str] = Field(None, max_length=50, description="图标标识")
@@ -15,7 +15,7 @@ class CollectionCreate(BaseModel):
 
 # 更新单词本请求
 class CollectionUpdate(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=100, description="单词本名称")
+    name: Optional[str] = Field(None, min_length=1, max_length=30, description="单词本名称")
     description: Optional[str] = Field(None, max_length=350, description="单词本描述")
     color: Optional[str] = Field(None, max_length=20, description="颜色标识")
     icon: Optional[str] = Field(None, max_length=50, description="图标标识")
