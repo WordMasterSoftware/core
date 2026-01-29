@@ -16,7 +16,7 @@ class WordCollection(SQLModel, table=True):
         sa_column=Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     )
     name: str = Field(max_length=100, nullable=False)
-    description: Optional[str] = Field(default=None)
+    description: Optional[str] = Field(default=None, max_length=350)
     color: Optional[str] = Field(default=None, max_length=20)
     icon: Optional[str] = Field(default=None, max_length=50)
     word_count: int = Field(default=0, nullable=False)
