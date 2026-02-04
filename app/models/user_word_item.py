@@ -24,12 +24,12 @@ class UserWordItem(SQLModel, table=True):
     )
 
     # 学习进度字段
-    status: int = Field(default=0)
+    status: int = Field(default=0, index=True)
     review_count: int = Field(default=0)
     fail_count: int = Field(default=0)
     match_count: int = Field(default=0)
     study_count: int = Field(default=0)
-    last_review_time: Optional[datetime] = Field(default=None)
+    last_review_time: Optional[datetime] = Field(default=None, index=True)
     next_review_due: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

@@ -461,6 +461,25 @@ class ExamService:
         llm_service = get_llm_service_for_user(user)
         translation_results = []
 
+        # 批量获取所有涉及单词的文本，避免 N+1 查询
+        all_involved_item_ids = set()
+        for sent_sub in sentences_submission:
+            words_involved = sent_sub.get("words_involved", [])
+            for w_id in words_involved:
+                try:
+                    all_involved_item_ids.add(uuid_pkg.UUID(str(w_id)))
+                except (ValueError, TypeError):
+                    pass
+
+        # 建立 UserWordItem ID -> Word Text 的映射
+        item_text_map = {}
+        if all_involved_item_ids:
+            stmt = select(UserWordItem.id, WordBook.word).join(
+                WordBook, UserWordItem.word_id == WordBook.id
+            ).where(UserWordItem.id.in_(all_involved_item_ids))
+            results = session.exec(stmt).all()
+            item_text_map = {item_id: word_text for item_id, word_text in results}
+
         for sent_sub in sentences_submission:
             sentence_id = sent_sub.get("sentence_id")
             chinese = sent_sub.get("chinese")
@@ -471,11 +490,10 @@ class ExamService:
             required_words_text = []
             for w_id in words_involved:
                 try:
-                    stmt = select(WordBook).join(UserWordItem, UserWordItem.word_id == WordBook.id).where(UserWordItem.id == uuid_pkg.UUID(str(w_id)))
-                    word_obj = session.exec(stmt).first()
-                    if word_obj:
-                        required_words_text.append(word_obj.word)
-                except Exception:
+                    w_uuid = uuid_pkg.UUID(str(w_id))
+                    if w_uuid in item_text_map:
+                        required_words_text.append(item_text_map[w_uuid])
+                except (ValueError, TypeError):
                     pass
 
             # 使用 LLM 评判
@@ -514,31 +532,19 @@ class ExamService:
         passed_item_ids = all_exam_item_ids - failed_word_ids_set
 
         # 更新失败单词 -> 0
+        from app.services.progress_service import ProgressService
         for item_id in failed_word_ids_set:
             uw_item = session.get(UserWordItem, item_id)
             # 确保条目存在且属于当前用户（安全检查）
             if uw_item and uw_item.user_id == user_id:
-                uw_item.status = 0
-                uw_item.fail_count += 1
-                session.add(uw_item)
+                ProgressService.reset_to_new(uw_item, session)
 
-        # 更新通过单词 -> +1
+        # 5. 更新通过单词 -> +1
+        from app.services.progress_service import ProgressService
         for item_id in passed_item_ids:
             uw_item = session.get(UserWordItem, item_id)
             if uw_item and uw_item.user_id == user_id:
-                # 根据考试模式更新状态
-                if exam.mode in ['immediate', 'random']:
-                    # 即时/随机复习：Status 2 -> 3 (Max 3)
-                    if uw_item.status == 2:
-                        uw_item.status = 3
-                elif exam.mode == 'complete':
-                    # 完全复习：Status 3 -> 4
-                    if uw_item.status == 3:
-                        uw_item.status = 4
-
-                uw_item.review_count += 1
-                uw_item.last_review_time = datetime.now()
-                session.add(uw_item)
+                ProgressService.update_exam_success(uw_item, exam.mode, session)
 
         # 4. 更新考试记录
         exam.exam_status = "completed"

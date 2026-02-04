@@ -37,6 +37,83 @@ class LLMService:
         self.model = model
         self.max_retries = 3
         self.retry_delay = 1  # seconds
+        # Simple in-memory cache for translations: word -> translation_dict
+        self._translation_cache = {}
+        self._max_cache_size = 2000
+
+    async def _safe_llm_call(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        timeout: float = 60.0,
+        retries: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Generic safe LLM call with retry logic and error handling.
+        """
+        for attempt in range(retries):
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=temperature,
+                    timeout=timeout
+                )
+
+                content = response.choices[0].message.content
+
+                try:
+                    # Clean up content if it contains markdown code blocks
+                    cleaned_content = content.strip()
+                    if cleaned_content.startswith("```json"):
+                        cleaned_content = cleaned_content[7:]
+                    if cleaned_content.startswith("```"):
+                        cleaned_content = cleaned_content[3:]
+                    if cleaned_content.endswith("```"):
+                        cleaned_content = cleaned_content[:-3]
+
+                    result = json.loads(cleaned_content.strip())
+                    if not isinstance(result, (dict, list)):
+                         # Only accept dict or list (though most prompts expect dict)
+                         # However, generate_exam_sentences expects list in "sentences" key usually,
+                         # but sometimes LLM returns just the list if prompted poorly.
+                         # Our prompts ask for JSON objects usually.
+                         pass
+                    return result
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON parsing failed. Content: {content[:200]}...")
+                    raise LLMResponseParseError(f"Failed to parse JSON response: {str(e)}")
+
+            except AuthenticationError as e:
+                logger.error(f"LLM Auth Error: {e}")
+                raise LLMAPIError("Invalid API Key or Auth Error")
+
+            except RateLimitError as e:
+                if attempt < retries - 1:
+                    wait_time = self.retry_delay * (2 ** attempt)
+                    logger.warning(f"Rate limited. Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    continue
+                raise LLMAPIError("Rate limit exceeded")
+
+            except (APIConnectionError, asyncio.TimeoutError) as e:
+                if attempt < retries - 1:
+                    wait_time = self.retry_delay * (2 ** attempt)
+                    logger.warning(f"Connection/Timeout error. Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    continue
+                raise LLMAPIError(f"Connection failed: {str(e)}")
+
+            except APIError as e:
+                logger.error(f"LLM API Error: {e}")
+                raise LLMAPIError(f"API Error: {str(e)}")
+
+            except Exception as e:
+                logger.error(f"Unexpected LLM Error: {e}")
+                raise LLMAPIError(f"Unexpected error: {str(e)}")
+
+        raise LLMAPIError("Max retries exceeded")
 
     async def translate_words(
         self,
@@ -44,129 +121,84 @@ class LLMService:
         batch_size: int = 20
     ) -> Dict[str, Dict[str, Any]]:
         """
-        批量翻译单词（增强错误处理）
-
-        Args:
-            words: 单词列表
-            batch_size: 批次大小，默认20个单词一批
-
-        Returns:
-            成功翻译的单词字典
-
-        Raises:
-            LLMAPIError: API调用错误
-            LLMResponseParseError: 响应解析错误
+        Batch translate words with caching.
         """
         if not words:
             return {}
 
         all_results = {}
+        words_to_fetch = []
+
+        # Check cache first
+        for word in words:
+            if word in self._translation_cache:
+                all_results[word] = self._translation_cache[word]
+            else:
+                words_to_fetch.append(word)
+
+        if not words_to_fetch:
+            return all_results
+
         failed_words = []
 
-        # 分批处理，避免单次请求过大
-        for i in range(0, len(words), batch_size):
-            batch = words[i:i + batch_size]
+        # Process missing words in batches
+        for i in range(0, len(words_to_fetch), batch_size):
+            batch = words_to_fetch[i:i + batch_size]
             try:
                 batch_results = await self._translate_batch(batch)
+
+                # Update cache
+                for w, res in batch_results.items():
+                    self._update_cache(w, res)
+
                 all_results.update(batch_results)
             except LLMServiceError as e:
-                logger.error(f"Batch translation failed for words {batch}: {e}")
+                logger.error(f"Batch translation failed for {batch}: {e}")
                 failed_words.extend(batch)
 
-        # 如果有失败的单词，尝试逐个翻译
+        # Retry failed words individually
         if failed_words:
             logger.info(f"Retrying {len(failed_words)} failed words individually...")
             for word in failed_words:
                 try:
                     single_result = await self._translate_batch([word])
+                    for w, res in single_result.items():
+                        self._update_cache(w, res)
                     all_results.update(single_result)
-                except LLMServiceError as e:
-                    logger.error(f"Failed to translate word '{word}': {e}")
-                    # 继续处理其他单词，不中断整个流程
+                except LLMServiceError:
+                    pass # Skip if still failing
 
         return all_results
 
+    def _update_cache(self, word: str, result: Dict):
+        """Update cache with LRU-like eviction if full."""
+        if len(self._translation_cache) >= self._max_cache_size:
+            # Remove a random item or oldest (dict is ordered in Python 3.7+)
+            # Simple approach: remove the first key (oldest inserted)
+            try:
+                first_key = next(iter(self._translation_cache))
+                del self._translation_cache[first_key]
+            except StopIteration:
+                pass
+        self._translation_cache[word] = result
+
     async def _translate_batch(self, words: List[str]) -> Dict[str, Dict[str, Any]]:
-        """翻译一批单词（带重试机制）"""
+        """Translate a batch using safe LLM call."""
         prompt = WORD_TRANSLATION_PROMPT.format(words=", ".join(words))
 
-        for attempt in range(self.max_retries):
-            try:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": "你是一个专业的英语词典助手。"},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.7,
-                    timeout=60.0  # 60秒超时
-                )
+        result = await self._safe_llm_call(
+            messages=[
+                {"role": "system", "content": "你是一个专业的英语词典助手。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7
+        )
 
-                content = response.choices[0].message.content
+        if not isinstance(result, dict):
+             # Try to recover if it returns a list or something else, but prompt usually ensures dict
+             raise LLMResponseParseError("Expected dictionary response")
 
-                # 尝试解析 JSON
-                try:
-                    result = json.loads(content)
-
-                    # 验证返回的数据格式
-                    if not isinstance(result, dict):
-                        raise LLMResponseParseError("LLM返回的不是字典格式")
-
-                    return result
-
-                except json.JSONDecodeError as e:
-                    logger.error(f"JSON解析失败，原始内容: {content[:200]}")
-                    raise LLMResponseParseError(f"无法解析LLM返回的JSON: {str(e)}")
-
-            except AuthenticationError as e:
-                # 认证错误不需要重试
-                logger.error(f"LLM API认证失败: {e}")
-                raise LLMAPIError("LLM API密钥无效或已过期，请检查配置")
-
-            except RateLimitError as e:
-                # 速率限制错误，等待后重试
-                if attempt < self.max_retries - 1:
-                    wait_time = self.retry_delay * (2 ** attempt)  # 指数退避
-                    logger.warning(f"LLM API速率限制，等待{wait_time}秒后重试...")
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    logger.error(f"LLM API速率限制，重试次数已用完: {e}")
-                    raise LLMAPIError("LLM API调用频率过高，请稍后再试")
-
-            except APIConnectionError as e:
-                # 网络连接错误，重试
-                if attempt < self.max_retries - 1:
-                    wait_time = self.retry_delay * (2 ** attempt)
-                    logger.warning(f"LLM API连接失败，{wait_time}秒后重试（{attempt + 1}/{self.max_retries}）...")
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    logger.error(f"LLM API连接失败，重试次数已用完: {e}")
-                    raise LLMAPIError("无法连接到LLM服务，请检查网络或API地址配置")
-
-            except APIError as e:
-                # 其他API错误
-                logger.error(f"LLM API错误: {e}")
-                raise LLMAPIError(f"LLM API调用失败: {str(e)}")
-
-            except asyncio.TimeoutError:
-                # 超时错误
-                if attempt < self.max_retries - 1:
-                    logger.warning(f"LLM API超时，重试中（{attempt + 1}/{self.max_retries}）...")
-                    await asyncio.sleep(self.retry_delay)
-                    continue
-                else:
-                    logger.error("LLM API超时，重试次数已用完")
-                    raise LLMAPIError("LLM API响应超时，请稍后再试")
-
-            except Exception as e:
-                # 未知错误
-                logger.error(f"LLM翻译时发生未知错误: {type(e).__name__}: {e}")
-                raise LLMAPIError(f"LLM服务异常: {str(e)}")
-
-        # 理论上不会到达这里
-        raise LLMAPIError("LLM API调用失败")
+        return result
 
     async def generate_exam_sentences(
         self,
@@ -174,39 +206,22 @@ class LLMService:
         count: int = 10,
         sentence_count: int = 5
     ) -> List[Dict[str, Any]]:
-        """生成考试句子（增强错误处理）"""
+        """Generate exam sentences."""
         prompt = EXAM_GENERATION_PROMPT.format(
             count=count,
             sentence_count=sentence_count,
             words=", ".join(words)
         )
 
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "你是一个专业的英语教师。"},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.8,
-                timeout=60.0
-            )
+        result = await self._safe_llm_call(
+            messages=[
+                {"role": "system", "content": "你是一个专业的英语教师。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.8
+        )
 
-            content = response.choices[0].message.content
-            result = json.loads(content)
-            return result.get("sentences", [])
-
-        except json.JSONDecodeError as e:
-            logger.error(f"考试句子生成JSON解析失败: {e}")
-            raise LLMResponseParseError("无法解析LLM生成的考试内容")
-
-        except (AuthenticationError, RateLimitError, APIConnectionError, APIError) as e:
-            logger.error(f"考试句子生成API错误: {e}")
-            raise LLMAPIError(f"考试生成失败: {str(e)}")
-
-        except Exception as e:
-            logger.error(f"考试句子生成未知错误: {e}")
-            raise LLMAPIError(f"考试生成异常: {str(e)}")
+        return result.get("sentences", [])
 
     async def grade_translation(
         self,
@@ -214,7 +229,7 @@ class LLMService:
         user_translation: str,
         required_words: List[str] = []
     ) -> Dict[str, Any]:
-        """评判翻译（增强错误处理）"""
+        """Grade translation."""
         prompt = TRANSLATION_GRADING_PROMPT.format(
             source_text=source_text,
             user_translation=user_translation,
@@ -222,8 +237,7 @@ class LLMService:
         )
 
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
+            return await self._safe_llm_call(
                 messages=[
                     {"role": "system", "content": "你是一个专业的英语评判老师。"},
                     {"role": "user", "content": prompt}
@@ -231,23 +245,9 @@ class LLMService:
                 temperature=0.3,
                 timeout=30.0
             )
-
-            content = response.choices[0].message.content
-            result = json.loads(content)
-            return result
-
-        except json.JSONDecodeError as e:
-            logger.error(f"翻译评判JSON解析失败: {e}")
-            # 降级策略：返回默认结果
-            return {
-                "correct": False,
-                "feedback": "评判系统暂时不可用，请稍后再试"
-            }
-
-        except Exception as e:
-            logger.error(f"翻译评判错误: {e}")
-            # 降级策略：返回默认结果
-            return {
+        except LLMServiceError:
+             # Fallback for grading as per requirement
+             return {
                 "correct": False,
                 "feedback": "评判系统暂时不可用，请稍后再试"
             }

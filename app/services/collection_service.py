@@ -42,20 +42,23 @@ class CollectionService:
         # 计算偏移量
         offset = (page - 1) * page_size
 
-        # 查询用户的单词本
-        statement = select(WordCollection).where(
-            WordCollection.user_id == user_id
-        ).offset(offset).limit(page_size).order_by(WordCollection.created_at.desc())
+        # 使用聚合查询同时获取单词本和单词数量
+        statement = (
+            select(WordCollection, func.count(UserWordItem.id))
+            .outerjoin(UserWordItem, WordCollection.id == UserWordItem.collection_id)
+            .where(WordCollection.user_id == user_id)
+            .group_by(WordCollection.id)
+            .offset(offset)
+            .limit(page_size)
+            .order_by(WordCollection.created_at.desc())
+        )
 
-        collections = session.exec(statement).all()
+        results = session.exec(statement).all()
 
-        # 为每个单词本动态计算word_count
-        for collection in collections:
-            count_statement = select(func.count()).select_from(UserWordItem).where(
-                UserWordItem.collection_id == collection.id
-            )
-            word_count = session.exec(count_statement).one()
-            collection.word_count = word_count
+        collections = []
+        for collection, count in results:
+            collection.word_count = count
+            collections.append(collection)
 
         # 统计总数
         count_statement = select(func.count()).select_from(WordCollection).where(WordCollection.user_id == user_id)

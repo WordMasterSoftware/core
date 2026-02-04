@@ -56,122 +56,8 @@ class StudyService:
             # 随机抽取新词
             new_words_sample = random.sample(new_words_results, min(20, len(new_words_results)))
 
-            # 构建最终队列：新词 + 穿插的待检验词
-            final_queue = []
-            pending_check_index = 0
-            pending_check_total = len(pending_check_results)
-
-            # 情况1：新词数量 < 3，直接在新词后插入所有待检验单词
-            if len(new_words_sample) < 3:
-                # 先添加所有新词
-                for item, word in new_words_sample:
-                    final_queue.append({
-                        "item_id": str(item.id),
-                        "word_id": str(word.id),
-                        "word": word.word,
-                        "chinese": word.content.get("chinese", ""),
-                        "phonetic": word.content.get("phonetic", ""),
-                        "part_of_speech": word.content.get("part_of_speech", ""),
-                        "sentences": word.content.get("sentences", []),
-                        "audio_url": f"/api/tts/{word.word}",
-                        "is_recheck": False
-                    })
-
-                # 再添加所有待检验单词
-                for check_item, check_word in pending_check_results:
-                    final_queue.append({
-                        "item_id": str(check_item.id),
-                        "word_id": str(check_word.id),
-                        "word": check_word.word,
-                        "chinese": check_word.content.get("chinese", ""),
-                        "phonetic": check_word.content.get("phonetic", ""),
-                        "part_of_speech": check_word.content.get("part_of_speech", ""),
-                        "sentences": check_word.content.get("sentences", []),
-                        "audio_url": f"/api/tts/{check_word.word}",
-                        "is_recheck": True
-                    })
-            else:
-                # 情况2：新词数量 >= 3
-                # 情况2.1：待检验单词总数 < 3且 > 0，直接在前3个新词后全部插入
-                if 0 < pending_check_total < 3:
-                    for i, (item, word) in enumerate(new_words_sample):
-                        final_queue.append({
-                            "item_id": str(item.id),
-                            "word_id": str(word.id),
-                            "word": word.word,
-                            "chinese": word.content.get("chinese", ""),
-                            "phonetic": word.content.get("phonetic", ""),
-                            "part_of_speech": word.content.get("part_of_speech", ""),
-                            "sentences": word.content.get("sentences", []),
-                            "audio_url": f"/api/tts/{word.word}",
-                            "is_recheck": False
-                        })
-
-                        # 在前3个新词后插入所有待检验单词
-                        if i == 2 or i == len(new_words_sample) - 1:
-                            for check_item, check_word in pending_check_results:
-                                final_queue.append({
-                                    "item_id": str(check_item.id),
-                                    "word_id": str(check_word.id),
-                                    "word": check_word.word,
-                                    "chinese": check_word.content.get("chinese", ""),
-                                    "phonetic": check_word.content.get("phonetic", ""),
-                                    "part_of_speech": check_word.content.get("part_of_speech", ""),
-                                    "sentences": check_word.content.get("sentences", []),
-                                    "audio_url": f"/api/tts/{check_word.word}",
-                                    "is_recheck": True
-                                })
-                            # 在第3个新词后插入完毕，继续处理剩余新词
-                            if i == 2:
-                                # 继续添加剩余的新词（不再插入待检验词）
-                                for remaining_item, remaining_word in new_words_sample[3:]:
-                                    final_queue.append({
-                                        "item_id": str(remaining_item.id),
-                                        "word_id": str(remaining_word.id),
-                                        "word": remaining_word.word,
-                                        "chinese": remaining_word.content.get("chinese", ""),
-                                        "phonetic": remaining_word.content.get("phonetic", ""),
-                                        "part_of_speech": remaining_word.content.get("part_of_speech", ""),
-                                        "sentences": remaining_word.content.get("sentences", []),
-                                        "audio_url": f"/api/tts/{remaining_word.word}",
-                                        "is_recheck": False
-                                    })
-                                break
-                else:
-                    # 情况2.2：待检验单词 >= 3，每3个新词后插入3个待检验单词
-                    for i, (item, word) in enumerate(new_words_sample):
-                        final_queue.append({
-                            "item_id": str(item.id),
-                            "word_id": str(word.id),
-                            "word": word.word,
-                            "chinese": word.content.get("chinese", ""),
-                            "phonetic": word.content.get("phonetic", ""),
-                            "part_of_speech": word.content.get("part_of_speech", ""),
-                            "sentences": word.content.get("sentences", []),
-                            "audio_url": f"/api/tts/{word.word}",
-                            "is_recheck": False
-                        })
-
-                        # 每3个新词后插入3个待检验词
-                        if (i + 1) % 3 == 0 or i == len(new_words_sample) - 1:
-                            words_to_insert = min(3, pending_check_total - pending_check_index)
-                            for j in range(words_to_insert):
-                                if pending_check_index < pending_check_total:
-                                    check_item, check_word = pending_check_results[pending_check_index]
-                                    final_queue.append({
-                                        "item_id": str(check_item.id),
-                                        "word_id": str(check_word.id),
-                                        "word": check_word.word,
-                                        "chinese": check_word.content.get("chinese", ""),
-                                        "phonetic": check_word.content.get("phonetic", ""),
-                                        "part_of_speech": check_word.content.get("part_of_speech", ""),
-                                        "sentences": check_word.content.get("sentences", []),
-                                        "audio_url": f"/api/tts/{check_word.word}",
-                                        "is_recheck": True
-                                    })
-                                    pending_check_index += 1
-
-            words = final_queue
+            # 使用 helper method 混合新词和待检验词
+            words = StudyService._mix_new_and_pending_words(new_words_sample, pending_check_results)
 
         elif mode == StudyMode.REVIEW:
             # 即时复习：状态为2，随机50个
@@ -260,6 +146,69 @@ class StudyService:
         }
 
     @staticmethod
+    def _format_word_for_queue(item, word, is_recheck: bool):
+        return {
+            "item_id": str(item.id),
+            "word_id": str(word.id),
+            "word": word.word,
+            "chinese": word.content.get("chinese", ""),
+            "phonetic": word.content.get("phonetic", ""),
+            "part_of_speech": word.content.get("part_of_speech", ""),
+            "sentences": word.content.get("sentences", []),
+            "audio_url": f"/api/tts/{word.word}",
+            "is_recheck": is_recheck
+        }
+
+    @staticmethod
+    def _mix_new_and_pending_words(new_words_sample, pending_check_results):
+        """
+        Helper to mix new words (Status 0) and pending check words (Status 1).
+        Logic:
+        1. If new words < 3: Append all pending words after new words.
+        2. If pending words < 3: Insert all pending words after the 3rd new word (or end).
+        3. Else (Many pending): Insert 3 pending words after every 3 new words.
+        """
+        final_queue = []
+        pending_check_index = 0
+        pending_check_total = len(pending_check_results)
+
+        # Scenario 1: Few new words
+        if len(new_words_sample) < 3:
+            for item, word in new_words_sample:
+                final_queue.append(StudyService._format_word_for_queue(item, word, False))
+            for item, word in pending_check_results:
+                final_queue.append(StudyService._format_word_for_queue(item, word, True))
+            return final_queue
+
+        # Scenario 2: Many new words
+        for i, (item, word) in enumerate(new_words_sample):
+            final_queue.append(StudyService._format_word_for_queue(item, word, False))
+
+            # Check insertion point (After 3rd word, 6th word... or end)
+            should_insert = (i + 1) % 3 == 0 or i == len(new_words_sample) - 1
+
+            if should_insert:
+                # Scenario 2.1: Few pending words (<3)
+                if 0 < pending_check_total < 3:
+                     # Insert all at the first opportunity (i==2 or end)
+                     if i == 2 or (i < 2 and i == len(new_words_sample) - 1):
+                         # If we haven't inserted them yet (implied by logic flow control, but here we can just check index)
+                         if pending_check_index == 0:
+                             for check_item, check_word in pending_check_results:
+                                 final_queue.append(StudyService._format_word_for_queue(check_item, check_word, True))
+                             pending_check_index = pending_check_total # All done
+
+                # Scenario 2.2: Many pending words (>=3)
+                else:
+                    words_to_insert = min(3, pending_check_total - pending_check_index)
+                    for _ in range(words_to_insert):
+                        check_item, check_word = pending_check_results[pending_check_index]
+                        final_queue.append(StudyService._format_word_for_queue(check_item, check_word, True))
+                        pending_check_index += 1
+
+        return final_queue
+
+    @staticmethod
     async def submit_study(
         user_id: uuid_pkg.UUID,
         item_id: uuid_pkg.UUID,
@@ -268,6 +217,8 @@ class StudyService:
         session: Session
     ) -> Dict[str, Any]:
         """提交学习结果"""
+        from app.services.progress_service import ProgressService
+
         # 获取学习条目和单词
         statement = select(UserWordItem, WordBook).join(
             WordBook, UserWordItem.word_id == WordBook.id
@@ -285,12 +236,7 @@ class StudyService:
 
         # 跳过
         if is_skip:
-            item.fail_count += 1
-            item.match_count = 0
-            item.study_count += 1
-            item.status = 0
-            session.add(item)
-            session.commit()
+            ProgressService.reset_to_new(item, session, is_skip=True)
             return {
                 "correct": False,
                 "status_update": "已跳过",
@@ -300,56 +246,12 @@ class StudyService:
         # 检查答案
         is_correct = user_input.lower().strip() == correct_answer.lower().strip()
 
-        # 无论对错，都增加学习次数
-        item.study_count += 1
-
-        if is_correct:
-            item.review_count += 1
-            item.last_review_time = datetime.utcnow()
-
-            if item.status == 0 and item.match_count == 0:
-                # 第一次匹配成功
-                item.status = 1
-                item.match_count = 1
-                status_msg = "待检验"
-                next_check = 3
-
-            elif item.status == 1 and item.match_count == 1:
-                # 第二次检验成功
-                item.status = 2
-                item.match_count = 0
-                status_msg = "待复习"
-                next_check = None
-
-            elif item.status == 2:
-                # 即时复习成功
-                item.status = 3
-                status_msg = "已背诵"
-                next_check = None
-
-            elif item.status == 3:
-                # 完全复习成功
-                item.status = 4
-                status_msg = "背诵完成"
-                next_check = None
-            else:
-                status_msg = "继续加油"
-                next_check = None
-        else:
-            # 答错了
-            item.fail_count += 1
-            item.match_count = 0
-            if item.status > 0:
-                item.status = 0  # 重置为未背诵
-            status_msg = "答错了，重新开始"
-            next_check = None
-
-        session.add(item)
-        session.commit()
+        # 更新进度
+        status_msg = ProgressService.update_study_progress(item, is_correct, session)
 
         return {
             "correct": is_correct,
             "status_update": status_msg,
-            "next_check_after": next_check,
+            "next_check_after": None, # Removed hardcoded 3, frontend might handle flow
             "correct_answer": None if is_correct else correct_answer
         }

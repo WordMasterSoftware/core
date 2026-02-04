@@ -8,10 +8,10 @@ class Exam(SQLModel, table=True):
     __tablename__ = "exams"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    user_id: UUID = Field(foreign_key="users.id")
-    collection_id: UUID = Field(foreign_key="word_collections.id")
+    user_id: UUID = Field(foreign_key="users.id", index=True)
+    collection_id: UUID = Field(foreign_key="word_collections.id", index=True)
     mode: str = Field(default="immediate") # immediate, random, complete
-    exam_status: str = Field(default="pending") # pending, generated, grading, completed, failed
+    exam_status: str = Field(default="pending", index=True) # pending, generated, grading, completed, failed
     total_words: int
     spelling_words_count: int
     translation_sentences_count: int

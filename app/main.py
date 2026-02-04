@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import create_db_and_tables
 from app.api import auth, words, study, exam, tts, collections, messages, dashboard
+from app.utils.logger import setup_logging
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -18,17 +19,19 @@ from typing import AsyncGenerator
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """应用生命周期管理"""
     # 启动时执行
+    logger = setup_logging()
+
     create_db_and_tables()
     os.makedirs(settings.TTS_CACHE_DIR, exist_ok=True)
 
-    print("🚀 WordMaster API 已启动")
-    print(f"📚 数据库: {settings.DATABASE_URL}")
-    print(f"🌐 允许的源: {settings.ALLOWED_ORIGINS}")
-    print(f"🤖 大模型: {settings.DEFAULT_LLM_MODEL}")
+    logger.info("🚀 WordMaster API 已启动")
+    logger.info(f"📚 数据库: {settings.DATABASE_URL}")
+    logger.info(f"🌐 允许的源: {settings.ALLOWED_ORIGINS}")
+    logger.info(f"🤖 大模型: {settings.DEFAULT_LLM_MODEL}")
     if settings.DEV_TOKEN:
-        print(f"📖 API 文档 (受保护): http://{settings.HOST}:{settings.PORT}/docs")
+        logger.info(f"📖 API 文档 (受保护): http://{settings.HOST}:{settings.PORT}/docs")
     else:
-        print("⚠️ DEV_TOKEN 未配置，API 文档已禁用")
+        logger.warning("⚠️ DEV_TOKEN 未配置，API 文档已禁用")
 
     yield
 
