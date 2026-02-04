@@ -26,6 +26,9 @@ def setup_logging():
     if not logger.handlers:
         logger.addHandler(console_handler)
 
+    # Prevent propagation to root logger to avoid double logging
+    logger.propagate = False
+
     # Also configure root logger to capture uvicorn/fastapi logs if needed,
     # but usually we want to control our own namespace 'app'
     # To capture everything:
