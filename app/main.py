@@ -1,10 +1,13 @@
 """FastAPI 主应用"""
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from starlette.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.database import create_db_and_tables
 from app.api import auth, words, study, exam, tts, collections, messages, dashboard
@@ -12,6 +15,9 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+
+# 创建速率限制器（基于客户端IP）
+limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -44,6 +50,10 @@ app = FastAPI(
     openapi_url=None, # 禁用默认 openapi.json
     lifespan=lifespan
 )
+
+# 配置速率限制
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # 配置CORS
 app.add_middleware(

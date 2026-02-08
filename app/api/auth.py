@@ -1,6 +1,8 @@
 """认证相关API"""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlmodel import Session
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from app.database import get_session
 from app.schemas.auth import (
     UserRegister, UserLogin, UserResponse, AuthResponse,
@@ -14,9 +16,14 @@ from app.config import settings
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
+# 获取速率限制器
+limiter = Limiter(key_func=get_remote_address)
+
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def register(
+    request: Request,
     user_data: UserRegister,
     session: Session = Depends(get_session)
 ):

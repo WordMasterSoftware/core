@@ -24,6 +24,9 @@ langchain-openai==0.0.5
 # TTS
 edge-tts==7.2.7
 
+# Rate Limiting
+slowapi==0.1.9
+
 # Utilities
 python-dotenv==1.0.0
 aiofiles==23.2.1
